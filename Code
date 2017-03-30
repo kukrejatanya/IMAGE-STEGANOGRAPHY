@@ -1,0 +1,215 @@
+
+clear all; close all; clc;
+% original Image
+[filename1,pathname]=uigetfile('*.*','select the image'); 
+image1=imread(num2str(filename1));
+figure(1);
+imshow(image1);	title('original image');     % orginal image for watermarking
+image1=double(image1);
+%logo image
+% use dmg0.bmp for copyright
+% use dmg2.tif for MCK
+imagew=imread('dmg2.tif');
+image1= double(image1);
+imagew = double(imagew);
+% level 2 decomposition of original image
+[C,S] = wavedec2(image1,2,'db1'); 
+% HH2 is selected as block to perform operation 
+block_HH2 = detcoef2('d',C,S,2);
+size_of_hiding_block = size(block_HH2);
+
+message = imagew;
+
+%-------------------DCT------------
+k=120;           
+blocksize=4;
+cover_object=double(block_HH2);
+
+orig_Mc=size(cover_object,1);        %Height
+orig_Nc=size(cover_object,2);        %width
+
+no_of_block = floor(orig_Mc/blocksize);
+
+% change value to complete block size only
+Mc = no_of_block*blocksize;
+Nc = no_of_block*blocksize;
+
+% determine maximum message size based on cover object, and blocksize
+max_message=(Mc*Nc/(blocksize^2)); 
+
+% determine size of logo image
+Mm=size(message,1);                %Height
+Nm=size(message,2);	                %Width
+
+% reshape the message to a vector
+message=round(reshape(message,Mm*Nm,1)./256); 
+% check that the message isn't too large for cover
+size_message= length(message);
+if (length(message) > max_message)
+   
+    error('Message too large to fit in Cover Object')
+end
+
+% generate shell of watermarked image
+watermarked_image=cover_object;
+
+% process the image in blocks
+% encodes such that (1,4) > (2,3) when message(kk)=0
+% and that (1,4) < (2,3) when message(kk)=1
+%-----------------------------------------
+
+x=1;
+y=1;
+for (kk = 1:length(message))
+
+  
+    dct_block=dct2(cover_object(y:y+blocksize-1,x:x+blocksize-1));
+    
+    % Now testing without dct
+    %dct_block = cover_object(y:y+blocksize-1,x:x+blocksize-1);
+    %--------------------------------------------------------------
+    % if message bit is black, (1,4) > (2,3)
+    if (message(kk) == 0)
+
+        % if (1,4) < (2,3) then we need to swap them
+        if (dct_block(1,4) < dct_block(2,3))
+                temp=dct_block(2,3);
+                dct_block(2,3)=dct_block(1,4);
+                dct_block(1,4)=temp;
+        end
+    
+    % if message bit is white, (1,4) < (2,3)
+    elseif (message(kk) == 1)
+        
+        % if (1,4) > (2,3) then we need to swap them
+        if (dct_block(1,4) >= dct_block(2,3))
+                temp=dct_block(2,3);
+                dct_block(2,3)=dct_block(1,4);
+                dct_block(1,4)=temp;
+        end
+    end
+    
+    % now we adjust the two values such that their difference >= k
+    if dct_block(1,4) > dct_block(2,3)
+        if dct_block(1,4) - dct_block(2,3) < k
+           dct_block(1,4)=dct_block(1,4)+(k/2);
+            dct_block(2,3)=dct_block(2,3)-(k/2);            
+        end  
+        
+    end
+        
+    
+    
+    watermarked_image(y:y+blocksize-1,x:x+blocksize-1)=idct2(dct_block);    
+    %watermarked_image(y:y+blocksize-1,x:x+blocksize-1)=dct_block;
+    
+    
+    % move on to next block. At and of row move to next row
+    if (x+blocksize) >= Mc
+        x=1;
+        y=y+blocksize;
+    else
+        x=x+blocksize;
+    end
+    
+           
+end
+
+% the watermarked_image in dwt domian
+enc_HH2 =watermarked_image;
+%reshape to 1x(Mc*Nc) vector
+enc_HH2=round(reshape(enc_HH2,1,orig_Mc*orig_Nc));
+end_point = length(enc_HH2);
+
+%C(55489:(55489+end_point-1)) = enc_HH2; %bior_3.5
+C(49153:(49153+end_point-1)) = enc_HH2;  %db_1
+%C(57964:(57964+end_point-1)) = enc_HH2; %sym_8
+
+D = waverec2(C,S,'db1');
+% D is the watermarked image
+marked=uint8(D);
+%----------------------------------------------
+figure(2)
+imshow(marked)
+title('Watermarked Image')
+
+
+%------------------------------show watermarked image
+
+colormap(gray(256));
+%imwrite(marked,gray(256),'watermark.bmp');
+N=prod(size((image1)));
+OI=double(image1(:));
+WI=double(marked(:));
+t1=sum((OI-WI).^2);
+MSE=t1/N
+PSNR=abs(20*log10(255/sqrt(MSE)))
+%----------------------------Other Functions Calling
+WPSNR = WPSNR(image1,marked)
+SSIM = ssim_index(image1,marked)
+correlation = corr2(image1,marked)
+
+
+%-----------------------------logo recovery----------------------------
+
+%marked = imnoise(marked,'speckle');
+%---------------------------------------------------
+%figure(4)
+%imshow(marked)
+%title('Noised Image')
+%imwrite(marked,gray(256),char(cellstr(['waterm',65+i1])),'jpg');
+%------------------------------------------------
+% level 2 decomposition of watermarked image
+[C1,S1] = wavedec2(marked,2,'db1');
+
+% HH2 is selected as block to perform operation
+block1 = detcoef2('d',C1,S1,2);
+
+% determine size of watermarked image
+orig_Mw=size(block1,1);        %Height
+orig_Nw=size(block1,2);        %Width
+no_of_block = floor(orig_Mw/blocksize);
+Mw = no_of_block*blocksize;
+Nw = no_of_block*blocksize;
+% determine message size based on logo object, and blocksize
+message_size=Mm*Nm;
+
+% process the image in blocks
+x=1;
+y=1;
+for (kk = 1:message_size)
+    
+    dct_block=dct2(block1(y:y+blocksize-1,x:x+blocksize-1));
+    
+    %Now testing without dct
+    %dct_block=block1(y:y+blocksize-1,x:x+blocksize-1);
+   
+    % if dct_block(1,4) > dct_block(2,3) then message(kk)=0
+    % otherwise message(kk)=1
+    if dct_block(1,4) > dct_block(2,3)
+        message_vector(kk)=0;
+    else
+        message_vector(kk)=1;
+    end
+   
+ 
+    % move on to next block. At and of row move to next row
+    if (x+blocksize) >= Mw
+        x=1;
+        y=y+blocksize;
+    else
+        x=x+blocksize;
+    end
+end
+
+msg_length  = length(message_vector);
+% reshape the embeded message
+message=(reshape(message_vector(1:Mm*Nm),Mm,Nm)*255);
+
+% display recovered message
+figure(3)
+imshow(message)
+title('Recovered Message');
+%imwrite(message,gray(256),char(cellstr(['water_rec',65+i1])),'jpg');
+
+
